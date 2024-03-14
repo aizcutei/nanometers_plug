@@ -1,11 +1,8 @@
 use bytemuck;
-use interprocess::local_socket::{LocalSocketListener, LocalSocketStream, NameTypeSupport};
+use interprocess::local_socket::{LocalSocketListener, NameTypeSupport};
 use nih_plug::prelude::*;
 use nih_plug_vizia::ViziaState;
-use std::{
-    io::{self, prelude::*, BufReader},
-    sync::Arc,
-};
+use std::{io::prelude::*, sync::Arc};
 mod editor;
 
 #[cfg(target_os = "macos")]
@@ -36,7 +33,7 @@ impl Default for NanometersPlug {
             }
         };
 
-        #[cfg(not(windows))]
+        #[cfg(not(target_os = "windows"))]
         {
             use std::fs;
             if fs::metadata(&name).is_ok() {
@@ -114,34 +111,30 @@ impl Plugin for NanometersPlug {
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         // Get current buffer
-        let mut temp_buffer = Vec::new();
-        for channel_samples in buffer.iter_samples() {
-            for sample in channel_samples {
-                temp_buffer.push(*sample);
-                *sample = *sample;
-            }
-        }
+        let temp_buffer = buffer.as_slice().concat();
 
         // Update Ring buffer
         let ring_buffer_index = self.ring_buffer[0] as usize;
         if ring_buffer_index + temp_buffer.len() > RING_BUFFER_SIZE {
             let split_index = RING_BUFFER_SIZE - ring_buffer_index;
             let (first, second) = temp_buffer.split_at(split_index);
-            self.ring_buffer[ring_buffer_index + 1..].clone_from_slice(&first[..]);
-            self.ring_buffer[1..second.len() + 1].clone_from_slice(&second[..]);
+            self.ring_buffer[ring_buffer_index + 1..].copy_from_slice(&first[..]);
+            self.ring_buffer[1..second.len() + 1].copy_from_slice(&second[..]);
             self.ring_buffer[0] = second.len() as f32;
         } else {
             self.ring_buffer[ring_buffer_index + 1..ring_buffer_index + 1 + temp_buffer.len()]
-                .clone_from_slice(&temp_buffer[..]);
+                .copy_from_slice(&temp_buffer[..]);
             self.ring_buffer[0] += temp_buffer.len() as f32;
         }
 
         // Send buffer to client
         let mut conn = match self.listener.accept() {
             Ok(conn) => conn,
-            Err(e) => return ProcessStatus::Normal,
+            Err(_) => return ProcessStatus::Normal,
         };
-        conn.write(bytemuck::cast_slice(&self.ring_buffer)).unwrap();
+        let send_bytes = bytemuck::cast_slice(&self.ring_buffer);
+        conn.write(send_bytes).unwrap();
+        conn.flush().unwrap();
 
         ProcessStatus::Normal
     }
