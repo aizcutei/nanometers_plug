@@ -20,9 +20,9 @@ nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["a
 nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git"}
 interprocess = "1.2.1"
 bytemuck = "1.14.3"
-# Uncomment the below line to disable the on-by-default VST3 feature to remove
-# the GPL compatibility requirement
-# nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", default_features = false, features = ["assert_process_allocs"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = {version = "0.28.0", features = ["net"]}
 
 [profile.release]
 lto = "thin"

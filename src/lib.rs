@@ -4,16 +4,29 @@ use nih_plug::prelude::*;
 use nih_plug_vizia::ViziaState;
 use std::{io::prelude::*, sync::Arc};
 mod editor;
+#[cfg(not(target_os = "windows"))]
+use nix::sys::socket::{
+    setsockopt,
+    sockopt::{RcvBuf, SndBuf},
+};
+#[cfg(not(target_os = "windows"))]
+use std::os::unix::net::UnixListener;
 
-#[cfg(target_os = "macos")]
-pub const RING_BUFFER_SIZE: usize = 44100;
-
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
 pub const RING_BUFFER_SIZE: usize = 48000;
+
+#[cfg(not(target_os = "windows"))]
+pub const RING_BUFFER_SIZE: usize = 15360;
 
 pub struct NanometersPlug {
     params: Arc<NanometersPlugParams>,
+
+    #[cfg(target_os = "windows")]
     listener: Arc<LocalSocketListener>,
+
+    #[cfg(not(target_os = "windows"))]
+    listener: Arc<UnixListener>,
+
     ring_buffer: Vec<f32>,
 }
 
@@ -41,7 +54,17 @@ impl Default for NanometersPlug {
             }
         }
 
-        let listener = LocalSocketListener::bind(name).expect("ERR: failed to bind to socket");
+        #[cfg(not(target_os = "windows"))]
+        let listener = UnixListener::bind(name).expect("Failed to bind to socket");
+        #[cfg(not(target_os = "windows"))]
+        {
+            let fd = &listener;
+            let _ = setsockopt(fd, RcvBuf, &262142);
+            let _ = setsockopt(fd, SndBuf, &262142);
+        }
+
+        #[cfg(target_os = "windows")]
+        let listener = LocalSocketListener::bind(name).expect("Failed to bind to socket");
 
         listener
             .set_nonblocking(true)
@@ -115,6 +138,9 @@ impl Plugin for NanometersPlug {
 
         // Update Ring buffer
         let ring_buffer_index = self.ring_buffer[0] as usize;
+        if temp_buffer.len() > RING_BUFFER_SIZE {
+            panic!("Buffer size is too large");
+        }
         if ring_buffer_index + temp_buffer.len() > RING_BUFFER_SIZE {
             let split_index = RING_BUFFER_SIZE - ring_buffer_index;
             let (first, second) = temp_buffer.split_at(split_index);
@@ -129,12 +155,16 @@ impl Plugin for NanometersPlug {
 
         // Send buffer to client
         let mut conn = match self.listener.accept() {
+            #[cfg(target_os = "windows")]
             Ok(conn) => conn,
+
+            #[cfg(not(target_os = "windows"))]
+            Ok((conn, _addr)) => conn,
+
             Err(_) => return ProcessStatus::Normal,
         };
         let send_bytes = bytemuck::cast_slice(&self.ring_buffer);
-        conn.write(send_bytes).unwrap();
-        conn.flush().unwrap();
+        conn.write(send_bytes).expect("msg write failed");
 
         ProcessStatus::Normal
     }

@@ -1,16 +1,19 @@
 // An example for receiver
 // Won't compile, just for demonstration
-
+use anyhow::Context;
 use interprocess::local_socket::{LocalSocketStream, NameTypeSupport};
-use std::io::{prelude::*, BufReader};
+use std::{
+    backtrace,
+    io::{prelude::*, BufReader},
+};
 
-#[cfg(target_os = "macos")]
-pub const RING_BUFFER_SIZE: usize = 44100;
-
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
 pub const RING_BUFFER_SIZE: usize = 48000;
 
-fn main() {
+#[cfg(not(target_os = "windows"))]
+pub const RING_BUFFER_SIZE: usize = 15360;
+
+pub fn main() -> anyhow::Result<()> {
     let name = {
         use NameTypeSupport::*;
         match NameTypeSupport::query() {
@@ -18,18 +21,16 @@ fn main() {
             OnlyNamespaced | Both => "@nanometers.sock",
         }
     };
+    let mut conn = LocalSocketStream::connect(name).context("Failed to connect to server")?;
 
-    let mut conn = LocalSocketStream::connect(name).expect("ERR: failed to connect to socket");
-
-    let mut reader = BufReader::new(&mut stream);
-
+    let mut conn = BufReader::new(conn);
     let mut buffer = [0; ((RING_BUFFER_SIZE + 1) * 4) as usize];
-    let mut buffer = &mut buffer[..];
+    let mut buf = &mut buffer[..];
 
     loop {
-        match reader.read(&mut buffer) {
+        match conn.read(&mut buf) {
             Ok(a) => {
-                let mut buffer_f32 = buffer
+                let mut buffer = buf
                     .chunks_exact(4)
                     .map(|chunk| {
                         let mut bytes = [0; 4];
@@ -37,14 +38,16 @@ fn main() {
                         f32::from_ne_bytes(bytes)
                     })
                     .collect::<Vec<f32>>();
+                println!("{:?}", buffer[1]);
             }
             Err(e) => {
-                reader = BufReader::new(
+                // println!("Error: {:?}", e);
+                conn = BufReader::new(
                     LocalSocketStream::connect(name).context("Failed to connect to server")?,
                 );
-                // also can set a sleep here.
                 continue;
             }
         }
     }
+    Ok(())
 }
