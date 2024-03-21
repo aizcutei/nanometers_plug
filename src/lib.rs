@@ -139,18 +139,22 @@ impl Plugin for NanometersPlug {
         // Update Ring buffer
         let ring_buffer_index = self.ring_buffer[0] as usize;
         if temp_buffer.len() > RING_BUFFER_SIZE {
-            panic!("Buffer size is too large");
-        }
-        if ring_buffer_index + temp_buffer.len() > RING_BUFFER_SIZE {
-            let split_index = RING_BUFFER_SIZE - ring_buffer_index;
-            let (first, second) = temp_buffer.split_at(split_index);
-            self.ring_buffer[ring_buffer_index + 1..].copy_from_slice(&first[..]);
-            self.ring_buffer[1..second.len() + 1].copy_from_slice(&second[..]);
-            self.ring_buffer[0] = second.len() as f32;
+            // only write the last RING_BUFFER_SIZE samples
+            let start = temp_buffer.len() - RING_BUFFER_SIZE;
+            self.ring_buffer[1..].copy_from_slice(&temp_buffer[start..]);
+            self.ring_buffer[0] = RING_BUFFER_SIZE as f32;
         } else {
-            self.ring_buffer[ring_buffer_index + 1..ring_buffer_index + 1 + temp_buffer.len()]
-                .copy_from_slice(&temp_buffer[..]);
-            self.ring_buffer[0] += temp_buffer.len() as f32;
+            let available_space = RING_BUFFER_SIZE - ring_buffer_index;
+            if temp_buffer.len() > available_space {
+                let (first, second) = temp_buffer.split_at(available_space);
+                self.ring_buffer[ring_buffer_index + 1..].copy_from_slice(first);
+                self.ring_buffer[0] = second.len() as f32;
+                self.ring_buffer[1..second.len() + 1].copy_from_slice(second);
+            } else {
+                self.ring_buffer[ring_buffer_index + 1..ring_buffer_index + 1 + temp_buffer.len()]
+                    .copy_from_slice(&temp_buffer);
+                self.ring_buffer[0] += temp_buffer.len() as f32;
+            }
         }
 
         // Send buffer to client
